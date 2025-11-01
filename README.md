@@ -1,2 +1,2 @@
-# traffic-accident-prediction
- Machine Learning project for predicting and analyzing traffic accidents.
+# anti money laundering project
+ Machine Learning project for predicting suspisous transaction activeties 
