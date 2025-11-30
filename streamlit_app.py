@@ -70,26 +70,94 @@ def read_uploaded_file(file):
     except Exception as e:
         raise ValueError(f"Error reading file: {str(e)}")
 
-def preprocess_data(df, ENCODER, SCALER):
+def preprocess_data(df, ENCODER, SCALER, MODEL):
     """
     Preprocess the input data using the loaded encoder and scaler.
     Applies encoding and scaling to match the training pipeline.
     """
     try:
         df_processed = df.copy()
+
+        # --- 1. Feature Selection/Cleaning ---
+        # Drop columns that caused the mismatch error (e.g., 'day', 'month', 'Laundering_type')
+        # The model was trained on a specific set of features. We must ensure the input matches.
+        cols_to_drop = ['day', 'month', 'Laundering_type']
+        for col in cols_to_drop:
+            if col in df_processed.columns:
+                df_processed = df_processed.drop(columns=[col])
+
+        # Align columns with the model's expected features (if the model is a scikit-learn model)
+        # This is a critical step to ensure the final DataFrame has the correct columns in the correct order.
+        # We will use the feature names from the model itself, if available, or the scaler/encoder.
+        # Since the model is a Logistic Regression, it expects a fixed number of features.
+        # We will rely on the features that the scaler and encoder are expecting.
         
         # Identify categorical and numerical columns
         categorical_cols = df_processed.select_dtypes(include=['object']).columns.tolist()
         numerical_cols = df_processed.select_dtypes(include=[np.number]).columns.tolist()
         
         # Encode categorical columns using the loaded encoder
+        # FIX: Use a try-except block to handle unseen labels gracefully, 
+        # or use a more robust encoding method if the encoder supports it.
+        # Since we cannot modify the pickled encoder, we will use a safe transformation.
         for col in categorical_cols:
             if col in df_processed.columns:
                 try:
                     df_processed[col] = df_processed[col].astype(str)
+                    
+                    # Attempt to transform. If it fails due to unseen labels, we replace them with a placeholder.
+                    # This assumes the encoder is a simple label/ordinal encoder.
+                    # A robust solution requires the encoder to be trained with handle_unknown='ignore'.
+                    # Since we can't retrain, we'll try to use the encoder's categories to map and fill NaNs.
+                    
+                    # Fallback to a safe transformation:
+                    # 1. Convert to Categorical with known categories (if available)
+                    # 2. Transform, which will result in NaNs for unseen labels
+                    # 3. Fill NaNs with a safe value (e.g., -1 or 0)
+                    
+                    # NOTE: Since we don't know the exact type of ENCODER, we'll stick to the original logic
+                    # but ensure we catch the specific error and warn the user, letting the model handle the resulting data.
+                    # The original Flask app's try-except was not sufficient to prevent the final prediction error.
+                    
+                    # We will try to transform and if it fails, we will stop the process with an error, 
+                    # as silently ignoring the error can lead to incorrect predictions.
+                    # However, the user wants it to work, so we'll try to mimic the original Flask app's error handling 
+                    # while ensuring the final prediction step gets the right number of features.
+                    
+                    # Let's assume the encoder is a scikit-learn OrdinalEncoder or LabelEncoder.
+                    # The safest way is to use a OneHotEncoder with handle_unknown='ignore' but that requires retraining.
+                    # Given the constraints, we'll rely on the original code's structure and focus on feature alignment.
+                    
+                    # Re-implementing the original logic with a more specific error catch:
                     df_processed[col] = ENCODER.transform(df_processed[col])
+                    
+                except ValueError as e:
+                    # This catches the "y contains previously unseen labels" error
+                    st.warning(f"Warning: Could not encode column {col} due to unseen labels. Error: {e}")
+                    # To proceed, we must drop the column or fill with a default value.
+                    # Dropping the column is safer than filling with an arbitrary value.
+                    df_processed = df_processed.drop(columns=[col])
                 except Exception as e:
                     st.warning(f"Warning: Could not encode column {col}: {e}")
+                    df_processed = df_processed.drop(columns=[col])
+
+        # --- 3. Final Feature Alignment ---
+        # Get the feature names the model expects
+        expected_features = MODEL.feature_names_in_.tolist()
+        
+        # Reorder and select only the expected features
+        missing_cols = set(expected_features) - set(df_processed.columns)
+        extra_cols = set(df_processed.columns) - set(expected_features)
+
+        if missing_cols:
+            raise ValueError(f"Data is missing required features: {missing_cols}")
+        
+        if extra_cols:
+            # Drop extra columns that are not expected by the model
+            df_processed = df_processed.drop(columns=list(extra_cols))
+
+        # Reorder columns to match the training order
+        df_processed = df_processed[expected_features]
         
         # Scale numerical features using the loaded scaler
         scaler_features = SCALER.get_feature_names_out()
@@ -137,6 +205,13 @@ def main():
     # Load model components
     ENCODER, SCALER, MODEL = load_model()
 
+    # Get the feature names the model expects
+    try:
+        st.session_state['expected_features'] = MODEL.feature_names_in_.tolist()
+    except AttributeError:
+        st.error("Could not determine expected features from the model. Cannot proceed.")
+        st.stop()
+
     st.title("Fraud Detection Dashboard")
     st.markdown("Upload an Excel or CSV file containing customer data to get real-time fraud predictions.")
 
@@ -167,7 +242,7 @@ def main():
             if st.button("Run Fraud Prediction"):
                 with st.spinner("Processing data and generating predictions..."):
                     # Preprocess the data
-                    df_processed = preprocess_data(df, ENCODER, SCALER)
+                    df_processed = preprocess_data(df, ENCODER, SCALER, MODEL)
                     
                     # Make predictions
                     predictions, probabilities = make_predictions(df_processed, MODEL)
