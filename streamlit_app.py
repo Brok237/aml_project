@@ -8,7 +8,7 @@ from datetime import datetime
 
 # --- CONFIGURATION ---
 st.set_page_config(
-    page_title="ML Model Prediction Dashboard",
+    page_title="Fraud Detection Dashboard",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -22,204 +22,112 @@ MODEL = None
 # --- MODEL LOADING FUNCTION ---
 @st.cache_resource
 def load_model():
-    """
-    Load the ML model from the pickle file at application startup.
-    Uses st.cache_resource to load the model only once.
-    """
     global MODEL_PIPELINE, ENCODER, SCALER, MODEL
     
     try:
-        # Model path relative to the Streamlit app file
         model_path = os.path.join(os.path.dirname(__file__), 'model', 'best_lr_pipeline.pkl')
-        
         with open(model_path, 'rb') as f:
             MODEL_PIPELINE = pickle.load(f)
         
-        # Extract components from the pipeline dictionary
-        ENCODER = MODEL_PIPELINE['encoder']
-        SCALER = MODEL_PIPELINE['scaler']
-        MODEL = MODEL_PIPELINE['model']
+        ENCODER = MODEL_PIPELINE['encoder']   # dict of encoders
+        SCALER = MODEL_PIPELINE['scaler']     # numeric scaler
+        MODEL = MODEL_PIPELINE['model']       # logistic regression
         
         st.success("Machine Learning Model loaded successfully!")
         return ENCODER, SCALER, MODEL
-        
     except Exception as e:
         st.error(f"Error loading model: {e}")
         st.stop()
 
-# --- UTILITY FUNCTIONS (Reused from Flask app) ---
-
+# --- UTILITY FUNCTIONS ---
 def allowed_file(filename):
-    """Check if the uploaded file has an allowed extension."""
-    ALLOWED_EXTENSIONS = {'xlsx', 'csv', 'xls'}
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'xlsx', 'xls', 'csv'}
 
 def read_uploaded_file(file):
-    """
-    Read uploaded Excel or CSV file and return a pandas DataFrame.
-    Handles both .xlsx and .csv formats.
-    """
-    try:
-        if file.name.endswith('.csv'):
-            df = pd.read_csv(file)
-        else:  # .xlsx or .xls
-            df = pd.read_excel(file)
-        
-        return df
-    
-    except Exception as e:
-        raise ValueError(f"Error reading file: {str(e)}")
+    if file.name.endswith('.csv'):
+        return pd.read_csv(file)
+    else:
+        return pd.read_excel(file)
 
 def preprocess_data(df, ENCODER, SCALER, MODEL):
-    """
-    Preprocess the input data using the loaded encoder and scaler.
-    Applies encoding and scaling to match the training pipeline.
-    """
-    try:
-        df_processed = df.copy()
+    df_processed = df.copy()
 
-        # --- 1. Feature Selection/Cleaning ---
-        # Drop columns that caused the mismatch error (e.g., 'day', 'month', 'Laundering_type')
-        # The model was trained on a specific set of features. We must ensure the input matches.
-        cols_to_drop = ['day', 'month', 'Laundering_type']
-        for col in cols_to_drop:
-            if col in df_processed.columns:
-                df_processed = df_processed.drop(columns=[col])
+    # --- Encode categorical columns ---
+    for col, le in ENCODER.items():
+        if col in df_processed.columns:
+            val = df_processed[col].astype(str)
+            df_processed[col] = val.apply(lambda x: x if x in le.classes_ else le.classes_[0])
+            df_processed[col] = le.transform(df_processed[col])
 
-        # Align columns with the model's expected features (if the model is a scikit-learn model)
-        # This is a critical step to ensure the final DataFrame has the correct columns in the correct order.
-        # We will use the feature names from the model itself, if available, or the scaler/encoder.
-        # Since the model is a Logistic Regression, it expects a fixed number of features.
-        # We will rely on the features that the scaler and encoder are expecting.
-        
-        # Identify categorical and numerical columns
-        categorical_cols = df_processed.select_dtypes(include=['object']).columns.tolist()
-        numerical_cols = df_processed.select_dtypes(include=[np.number]).columns.tolist()
-        
-        # Encode categorical columns using the loaded encoder
-        # FIX: Use a try-except block to handle unseen labels gracefully, 
-        # or use a more robust encoding method if the encoder supports it.
-        # Since we cannot modify the pickled encoder, we will use a safe transformation.
-        for col in categorical_cols:
-            if col in df_processed.columns:
-                try:
-                    df_processed[col] = df_processed[col].astype(str)
-                    
-                    # Attempt to transform. If it fails due to unseen labels, we replace them with a placeholder.
-                    # This assumes the encoder is a simple label/ordinal encoder.
-                    # A robust solution requires the encoder to be trained with handle_unknown='ignore'.
-                    # Since we can't retrain, we'll try to use the encoder's categories to map and fill NaNs.
-                    
-                    # Fallback to a safe transformation:
-                    # 1. Convert to Categorical with known categories (if available)
-                    # 2. Transform, which will result in NaNs for unseen labels
-                    # 3. Fill NaNs with a safe value (e.g., -1 or 0)
-                    
-                    # NOTE: Since we don't know the exact type of ENCODER, we'll stick to the original logic
-                    # but ensure we catch the specific error and warn the user, letting the model handle the resulting data.
-                    # The original Flask app's try-except was not sufficient to prevent the final prediction error.
-                    
-                    # We will try to transform and if it fails, we will stop the process with an error, 
-                    # as silently ignoring the error can lead to incorrect predictions.
-                    # However, the user wants it to work, so we'll try to mimic the original Flask app's error handling 
-                    # while ensuring the final prediction step gets the right number of features.
-                    
-                    # Let's assume the encoder is a scikit-learn OrdinalEncoder or LabelEncoder.
-                    # The safest way is to use a OneHotEncoder with handle_unknown='ignore' but that requires retraining.
-                    # Given the constraints, we'll rely on the original code's structure and focus on feature alignment.
-                    
-                    # Re-implementing the original logic with a more specific error catch:
-                    df_processed[col] = ENCODER.transform(df_processed[col])
-                    
-                except ValueError as e:
-                    # This catches the "y contains previously unseen labels" error
-                    st.warning(f"Warning: Could not encode column {col} due to unseen labels. Error: {e}")
-                    # To proceed, we must drop the column or fill with a default value.
-                    # Dropping the column is safer than filling with an arbitrary value.
-                    df_processed = df_processed.drop(columns=[col])
-                except Exception as e:
-                    st.warning(f"Warning: Could not encode column {col}: {e}")
-                    df_processed = df_processed.drop(columns=[col])
-
-        # --- 3. Final Feature Alignment ---
-        # Get the feature names the model expects
-        expected_features = MODEL.feature_names_in_.tolist()
-        
-        # Reorder and select only the expected features
-        missing_cols = set(expected_features) - set(df_processed.columns)
-        extra_cols = set(df_processed.columns) - set(expected_features)
-
-        if missing_cols:
-            raise ValueError(f"Data is missing required features: {missing_cols}")
-        
-        if extra_cols:
-            # Drop extra columns that are not expected by the model
-            df_processed = df_processed.drop(columns=list(extra_cols))
-
-        # Reorder columns to match the training order
-        df_processed = df_processed[expected_features]
-        
-        # Scale numerical features using the loaded scaler
-        scaler_features = SCALER.get_feature_names_out()
-        features_to_scale = [col for col in scaler_features if col in df_processed.columns]
-        
-        if features_to_scale:
-            df_processed[features_to_scale] = SCALER.transform(df_processed[features_to_scale])
-        
-        return df_processed
+    # --- Ensure numeric columns ---
+    numeric_cols = SCALER.feature_names_in_.tolist()
+    for col in numeric_cols:
+        if col not in df_processed.columns:
+            raise ValueError(f"Missing numeric column: {col}")
+        df_processed[col] = pd.to_numeric(df_processed[col], errors='coerce')
     
-    except Exception as e:
-        raise ValueError(f"Error preprocessing data: {str(e)}")
+    # --- Scale numeric columns ---
+    df_processed[numeric_cols] = SCALER.transform(df_processed[numeric_cols])
+
+    # --- Align columns with model ---
+    expected_features = MODEL.feature_names_in_.tolist()
+    missing_cols = set(expected_features) - set(df_processed.columns)
+    if missing_cols:
+        raise ValueError(f"Missing features: {missing_cols}")
+    df_processed = df_processed[expected_features]
+    
+    return df_processed
+
+def apply_custom_rules(df):
+    """
+    Apply your special fraud rules:
+    1. Amount > 13500 → Fraud
+    2. Amount <= 13500 and Country in ['Morocco', 'Pakistan'] → Fraud
+    3. Payment type is 'Check' or 'Credit Card' AND currency in ['MAD', 'PKR', 'AED'] → Fraud
+    """
+    df_rules = df.copy()
+    fraud_flags = np.zeros(len(df_rules), dtype=int)
+
+    for i, row in df_rules.iterrows():
+        amount = row.get('Amount', 0)
+        country = str(row.get('Country', '')).strip()
+        pay_type = str(row.get('PaymentType', '')).strip()
+        currency = str(row.get('Currency', '')).strip()
+
+        if amount > 13500:
+            fraud_flags[i] = 1
+        elif amount <= 13500 and country in ['Morocco', 'Pakistan']:
+            fraud_flags[i] = 1
+        elif pay_type in ['Check', 'Credit Card'] and currency in ['MAD', 'PKR', 'AED']:
+            fraud_flags[i] = 1
+
+    df_rules['Rule_Fraud'] = fraud_flags
+    return df_rules
 
 def make_predictions(df_processed, MODEL):
-    """
-    Make predictions using the loaded Logistic Regression model.
-    Returns both class predictions and probability scores.
-    """
-    try:
-        predictions = MODEL.predict(df_processed)
-        probabilities = MODEL.predict_proba(df_processed)
-        return predictions, probabilities
-    
-    except Exception as e:
-        raise ValueError(f"Error making predictions: {str(e)}")
+    preds = MODEL.predict(df_processed)
+    probs = MODEL.predict_proba(df_processed)
+    return preds, probs
 
 def get_download_link(df_results):
-    """Generates a download link for the prediction results DataFrame."""
     output = BytesIO()
     df_results.to_csv(output, index=False)
     output.seek(0)
-    
-    # Create a download button
     st.download_button(
         label="Download Predictions as CSV",
         data=output,
         file_name=f'predictions_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
-        mime='text/csv',
-        key='download_csv'
+        mime='text/csv'
     )
 
-# --- MAIN APPLICATION LOGIC ---
-
+# --- MAIN APPLICATION ---
 def main():
-    # Load model components
     ENCODER, SCALER, MODEL = load_model()
 
-    # Get the feature names the model expects
-    try:
-        st.session_state['expected_features'] = MODEL.feature_names_in_.tolist()
-    except AttributeError:
-        st.error("Could not determine expected features from the model. Cannot proceed.")
-        st.stop()
-
     st.title("Fraud Detection Dashboard")
-    st.markdown("Upload an Excel or CSV file containing customer data to get real-time fraud predictions.")
+    st.markdown("Upload an Excel/CSV file containing transaction data for real-time fraud prediction.")
 
-    # File Uploader
-    uploaded_file = st.file_uploader(
-        "Choose a file (.xlsx, .xls, .csv)",
-        type=['xlsx', 'xls', 'csv']
-    )
+    uploaded_file = st.file_uploader("Choose a file (.xlsx, .xls, .csv)", type=['xlsx', 'xls', 'csv'])
 
     if uploaded_file is not None:
         if not allowed_file(uploaded_file.name):
@@ -227,76 +135,47 @@ def main():
             return
 
         try:
-            # Read the uploaded file
             df = read_uploaded_file(uploaded_file)
-            
             if df.empty:
                 st.error("Uploaded file is empty.")
                 return
-
+            
             st.subheader("1. Data Preview")
             st.dataframe(df.head())
-            st.info(f"Successfully loaded {len(df)} rows and {len(df.columns)} columns.")
 
-            # Prediction Button
             if st.button("Run Fraud Prediction"):
-                with st.spinner("Processing data and generating predictions..."):
-                    # Preprocess the data
+                with st.spinner("Processing..."):
                     df_processed = preprocess_data(df, ENCODER, SCALER, MODEL)
-                    
-                    # Make predictions
-                    predictions, probabilities = make_predictions(df_processed, MODEL)
-                    
-                    # Calculate statistics
-                    total_rows = len(predictions)
-                    fraud_count = int(np.sum(predictions))
-                    legit_count = total_rows - fraud_count
-                    fraud_percentage = (fraud_count / total_rows * 100) if total_rows > 0 else 0
-                    
-                    # Prepare results DataFrame
+                    preds, probs = make_predictions(df_processed, MODEL)
+
                     df_results = df.copy()
-                    df_results['Prediction'] = predictions
-                    df_results['Fraud_Probability'] = [prob[1] for prob in probabilities]
-                    df_results['Legit_Probability'] = [prob[0] for prob in probabilities]
-                    
-                    # Store results in session state
-                    st.session_state['results'] = {
-                        'total_rows': total_rows,
-                        'fraud_count': fraud_count,
-                        'legit_count': legit_count,
-                        'fraud_percentage': fraud_percentage,
-                        'df_results': df_results
-                    }
-                    st.success(f"Prediction complete! Processed {total_rows} records.")
+                    df_results['Model_Prediction'] = preds
+                    df_results['Fraud_Probability'] = [p[1] for p in probs]
+                    df_results['Legit_Probability'] = [p[0] for p in probs]
 
-        except ValueError as e:
-            st.error(f"Data Error: {e}")
+                    # Apply custom fraud rules
+                    df_results = apply_custom_rules(df_results)
+
+                    # Metrics
+                    total = len(df_results)
+                    fraud_count = df_results['Rule_Fraud'].sum()
+                    legit_count = total - fraud_count
+                    fraud_percent = (fraud_count / total) * 100 if total else 0
+
+                    st.header("2. Prediction Results")
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Total Records", total)
+                    col2.metric("Fraud Cases (Rules)", fraud_count)
+                    col3.metric("Fraud Percentage", f"{fraud_percent:.2f}%")
+
+                    st.subheader("Prediction Table")
+                    st.dataframe(df_results)
+
+                    st.subheader("Download Results")
+                    get_download_link(df_results)
+
         except Exception as e:
-            st.exception(f"An unexpected error occurred: {e}")
+            st.exception(f"Error: {e}")
 
-    # Display Results (Dashboard)
-    if 'results' in st.session_state:
-        results = st.session_state['results']
-        df_results = results['df_results']
-
-        st.header("2. Prediction Results Dashboard")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric(label="Total Records Processed", value=results['total_rows'])
-        
-        with col2:
-            st.metric(label="Predicted Fraud Cases", value=results['fraud_count'])
-            
-        with col3:
-            st.metric(label="Fraud Percentage", value=f"{results['fraud_percentage']:.2f}%")
-
-        st.subheader("Predicted Data Table")
-        st.dataframe(df_results)
-        
-        st.subheader("Download Results")
-        get_download_link(df_results)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
