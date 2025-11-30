@@ -1,6 +1,6 @@
 """
 Flask Application for ML Model Prediction Dashboard
-Loads a pre-trained Logistic Regression model with ENCODERS and scaler from a pickle file.
+Loads a pre-trained Logistic Regression model with encoder and scaler from a pickle file.
 Handles Excel/CSV uploads, processes data, and displays predictions in a dashboard.
 """
 
@@ -36,7 +36,7 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 
 # These will be loaded once at app startup
 MODEL_PIPELINE = None
-ENCODERS = None
+ENCODER = None
 SCALER = None
 MODEL = None
 LAST_PREDICTIONS = None
@@ -50,7 +50,7 @@ def load_model():
     Load the ML model from the pickle file at application startup.
     This function is called once when the app starts to avoid repeated loading.
     """
-    global MODEL_PIPELINE, ENCODERS, SCALER, MODEL
+    global MODEL_PIPELINE, ENCODER, SCALER, MODEL
     
     try:
         model_path = os.path.join(os.path.dirname(__file__), 'model', 'best_lr_pipeline.pkl')
@@ -59,16 +59,14 @@ def load_model():
             MODEL_PIPELINE = pickle.load(f)
         
         # Extract components from the pipeline dictionary
-        ENCODERS = MODEL_PIPELINE['encoder']
+        ENCODER = MODEL_PIPELINE['encoder']
         SCALER = MODEL_PIPELINE['scaler']
         MODEL = MODEL_PIPELINE['model']
         
         print("✓ Model loaded successfully!")
-        print("  - Encoders loaded for columns:", list(ENCODERS.keys()))
-        print("  - Scaler features:", SCALER.get_feature_names_out())
-        print("  - Model classes:", MODEL.classes_)
-
-
+        print(f"  - Encoder classes: {len(ENCODER.classes_)}")
+        print(f"  - Scaler features: {SCALER.get_feature_names_out()}")
+        print(f"  - Model classes: {MODEL.classes_}")
         
     except Exception as e:
         print(f"✗ Error loading model: {e}")
@@ -100,25 +98,41 @@ def read_uploaded_file(file):
 
 def preprocess_data(df):
     """
-    Preprocess the input data using the loaded ENCODERS dict and scaler.
+    Preprocess the input data using the loaded encoder and scaler.
+    Applies encoding and scaling to match the training pipeline.
     """
     try:
+        # Make a copy to avoid modifying the original
         df_processed = df.copy()
-
-        # Encode categorical columns using the loaded ENCODERSs dict
-        for col, le in ENCODERS.items():
+        
+        # Identify categorical and numerical columns
+        categorical_cols = df_processed.select_dtypes(include=['object']).columns.tolist()
+        numerical_cols = df_processed.select_dtypes(include=[np.number]).columns.tolist()
+        
+        # Encode categorical columns using the loaded encoder
+        for col in categorical_cols:
             if col in df_processed.columns:
-                df_processed[col] = le.transform(df_processed[col].astype(str))
-
+                try:
+                    # Convert to string to match encoder training
+                    df_processed[col] = df_processed[col].astype(str)
+                    df_processed[col] = ENCODER.transform(df_processed[col])
+                except Exception as e:
+                    print(f"Warning: Could not encode column {col}: {e}")
+        
         # Scale numerical features using the loaded scaler
-        numeric_cols = SCALER.feature_names_in_.tolist()  # expects same columns used in training
-        df_processed[numeric_cols] = SCALER.transform(df_processed[numeric_cols])
-
+        # The scaler expects specific feature names: ['Amount', 'avg_amount_per_customer', 'amount_ratio']
+        scaler_features = SCALER.get_feature_names_out()
+        
+        # Select only the features that the scaler expects
+        features_to_scale = [col for col in scaler_features if col in df_processed.columns]
+        
+        if features_to_scale:
+            df_processed[features_to_scale] = SCALER.transform(df_processed[features_to_scale])
+        
         return df_processed
-
+    
     except Exception as e:
         raise ValueError(f"Error preprocessing data: {str(e)}")
-
 
 def make_predictions(df_processed):
     """

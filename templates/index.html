@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Data - ML Prediction Dashboard{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="hero-section">
+        <h1 class="hero-title">ML Fraud Detection System</h1>
+        <p class="hero-subtitle">Upload your data and get instant predictions powered by machine learning</p>
+    </div>
+
+    <div class="upload-section">
+        <div class="card upload-card">
+            <div class="card-header">
+                <i class="bi bi-cloud-arrow-up"></i>
+                <h2>Upload Your Data</h2>
+            </div>
+            
+            <div class="card-body">
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <!-- File Input Area -->
+                    <div class="file-input-wrapper">
+                        <div class="file-input-area" id="fileInputArea">
+                            <i class="bi bi-file-earmark-arrow-up"></i>
+                            <p class="file-input-text">Drag and drop your file here</p>
+                            <p class="file-input-subtext">or click to select</p>
+                            <input 
+                                type="file" 
+                                id="fileInput" 
+                                name="file" 
+                                accept=".xlsx,.xls,.csv"
+                                required
+                            >
+                        </div>
+                        <div id="fileNameDisplay" class="file-name-display" style="display: none;">
+                            <i class="bi bi-check-circle-fill"></i>
+                            <span id="selectedFileName"></span>
+                        </div>
+                    </div>
+
+                    <!-- File Format Info -->
+                    <div class="info-box">
+                        <i class="bi bi-info-circle"></i>
+                        <div>
+                            <strong>Supported Formats:</strong>
+                            <ul>
+                                <li>Excel files (.xlsx, .xls)</li>
+                                <li>CSV files (.csv)</li>
+                                <li>Maximum file size: 16 MB</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                        <i class="bi bi-lightning-charge"></i>
+                        Analyze Data
+                    </button>
+                </form>
+
+                <!-- Loading Spinner -->
+                <div id="loadingSpinner" class="loading-spinner" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Processing your data...</p>
+                </div>
+
+                <!-- Error Message -->
+                <div id="errorMessage" class="alert alert-error" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <span id="errorText"></span>
+                </div>
+
+                <!-- Success Message -->
+                <div id="successMessage" class="alert alert-success" style="display: none;">
+                    <i class="bi bi-check-circle"></i>
+                    <span id="successText"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Features Info -->
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="bi bi-lightning-fill"></i>
+                </div>
+                <h3>Fast Processing</h3>
+                <p>Get predictions in seconds with our optimized ML model</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="bi bi-shield-check"></i>
+                </div>
+                <h3>Accurate Detection</h3>
+                <p>Trained Logistic Regression model for fraud detection</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="bi bi-download"></i>
+                </div>
+                <h3>Export Results</h3>
+                <p>Download predictions as CSV for further analysis</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="bi bi-bar-chart"></i>
+                </div>
+                <h3>Visual Dashboard</h3>
+                <p>Interactive charts and statistics for insights</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Initialize file upload handler
+    document.addEventListener('DOMContentLoaded', function() {
+        setupFileUpload();
+        setupFormSubmit();
+    });
+
+    function setupFileUpload() {
+        const fileInputArea = document.getElementById('fileInputArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const selectedFileName = document.getElementById('selectedFileName');
+
+        // Drag and drop functionality
+        fileInputArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileInputArea.classList.add('dragover');
+        });
+
+        fileInputArea.addEventListener('dragleave', () => {
+            fileInputArea.classList.remove('dragover');
+        });
+
+        fileInputArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileInputArea.classList.remove('dragover');
+            fileInput.files = e.dataTransfer.files;
+            updateFileDisplay();
+        });
+
+        // Click to select file
+        fileInputArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // File input change handler
+        fileInput.addEventListener('change', updateFileDisplay);
+
+        function updateFileDisplay() {
+            if (fileInput.files.length > 0) {
+                const fileName = fileInput.files[0].name;
+                selectedFileName.textContent = fileName;
+                fileNameDisplay.style.display = 'flex';
+                fileInputArea.style.display = 'none';
+            } else {
+                fileNameDisplay.style.display = 'none';
+                fileInputArea.style.display = 'flex';
+            }
+        }
+    }
+
+    function setupFormSubmit() {
+        const uploadForm = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        const errorText = document.getElementById('errorText');
+        const successText = document.getElementById('successText');
+
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            // Reset messages
+            errorMessage.style.display = 'none';
+            successMessage.style.display = 'none';
+
+            // Show loading spinner
+            loadingSpinner.style.display = 'flex';
+            submitBtn.disabled = true;
+
+            try {
+                const formData = new FormData(uploadForm);
+                const response = await fetch('/api/predict', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Show success message
+                    successText.textContent = `Successfully processed ${data.total_rows} records! Redirecting to dashboard...`;
+                    successMessage.style.display = 'flex';
+
+                    // Redirect to dashboard after 2 seconds
+                    setTimeout(() => {
+                        window.location.href = '/dashboard';
+                    }, 2000);
+                } else {
+                    throw new Error(data.error || 'Unknown error occurred');
+                }
+            } catch (error) {
+                errorText.textContent = error.message;
+                errorMessage.style.display = 'flex';
+                submitBtn.disabled = false;
+            } finally {
+                loadingSpinner.style.display = 'none';
+            }
+        });
+    }
+
+    function showAbout() {
+        alert('ML Prediction Dashboard v1.0\n\nA machine learning application for fraud detection using Logistic Regression.\n\nFeatures:\n- Fast data processing\n- Accurate predictions\n- Interactive dashboard\n- Export results as CSV');
+    }
+</script>
+{% endblock %}

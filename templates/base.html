@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ML Prediction Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Bootstrap Icons for better UI -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="navbar-brand">
+                <i class="bi bi-graph-up"></i>
+                <span>ML Prediction Dashboard</span>
+            </div>
+            <ul class="navbar-menu">
+                <li><a href="/" class="nav-link">Home</a></li>
+                <li><a href="/dashboard" class="nav-link">Dashboard</a></li>
+                <li><a href="#" class="nav-link" onclick="showAbout()">About</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>&copy; 2024 ML Prediction Dashboard. All rights reserved.</p>
+    </footer>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

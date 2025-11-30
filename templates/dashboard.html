@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - ML Prediction Results{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="dashboard-header">
+        <h1>Prediction Results Dashboard</h1>
+        <p>Comprehensive analysis of your predictions</p>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loadingState" class="loading-state">
+        <div class="spinner"></div>
+        <p>Loading predictions...</p>
+    </div>
+
+    <!-- Main Dashboard Content -->
+    <div id="dashboardContent" style="display: none;">
+        <!-- Summary Cards -->
+        <div class="summary-cards">
+            <div class="summary-card">
+                <div class="card-icon total">
+                    <i class="bi bi-file-earmark-text"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Total Records</h3>
+                    <p class="card-value" id="totalRecords">0</p>
+                </div>
+            </div>
+
+            <div class="summary-card">
+                <div class="card-icon fraud">
+                    <i class="bi bi-exclamation-octagon"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Fraud Cases</h3>
+                    <p class="card-value" id="fraudCount">0</p>
+                    <span class="card-percentage" id="fraudPercentage">0%</span>
+                </div>
+            </div>
+
+            <div class="summary-card">
+                <div class="card-icon legit">
+                    <i class="bi bi-check-circle"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Legitimate Cases</h3>
+                    <p class="card-value" id="legitCount">0</p>
+                </div>
+            </div>
+
+            <div class="summary-card">
+                <div class="card-icon accuracy">
+                    <i class="bi bi-graph-up"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Model Status</h3>
+                    <p class="card-value">Active</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="charts-section">
+            <!-- Pie Chart for Distribution -->
+            <div class="chart-container">
+                <div class="chart-header">
+                    <h2>Prediction Distribution</h2>
+                </div>
+                <canvas id="distributionChart"></canvas>
+            </div>
+
+            <!-- Bar Chart for Statistics -->
+            <div class="chart-container">
+                <div class="chart-header">
+                    <h2>Case Statistics</h2>
+                </div>
+                <canvas id="statisticsChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Results Table -->
+        <div class="results-table-container">
+            <div class="table-header">
+                <h2>Detailed Predictions</h2>
+                <div class="table-actions">
+                    <button class="btn btn-secondary" onclick="downloadPredictions()">
+                        <i class="bi bi-download"></i>
+                        Download CSV
+                    </button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/'">
+                        <i class="bi bi-arrow-left"></i>
+                        New Analysis
+                    </button>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="results-table" id="resultsTable">
+                    <thead>
+                        <tr>
+                            <th>Row #</th>
+                            <th>Prediction</th>
+                            <th>Fraud Probability</th>
+                            <th>Legit Probability</th>
+                            <th>Confidence</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination">
+            <!-- Populated by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Error State -->
+    <div id="errorState" class="error-state" style="display: none;">
+        <div class="error-icon">
+            <i class="bi bi-exclamation-triangle"></i>
+        </div>
+        <h2>No Predictions Available</h2>
+        <p>Please upload a file first to see predictions.</p>
+        <button class="btn btn-primary" onclick="window.location.href='/'">
+            <i class="bi bi-arrow-left"></i>
+            Go to Upload
+        </button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+<script>
+    // Global variables
+    let predictions = [];
+    let probabilities = [];
+    let currentPage = 1;
+    const itemsPerPage = 10;
+    let distributionChart = null;
+    let statisticsChart = null;
+
+    // Initialize dashboard on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        loadPredictions();
+    });
+
+    async function loadPredictions() {
+        try {
+            const response = await fetch('/api/predictions');
+            
+            if (!response.ok) {
+                showErrorState();
+                return;
+            }
+
+            const data = await response.json();
+            predictions = data.predictions;
+            probabilities = data.probabilities;
+
+            if (predictions.length === 0) {
+                showErrorState();
+                return;
+            }
+
+            // Calculate statistics
+            const totalRecords = predictions.length;
+            const fraudCount = predictions.filter(p => p === 1).length;
+            const legitCount = totalRecords - fraudCount;
+            const fraudPercentage = ((fraudCount / totalRecords) * 100).toFixed(2);
+
+            // Update summary cards
+            document.getElementById('totalRecords').textContent = totalRecords;
+            document.getElementById('fraudCount').textContent = fraudCount;
+            document.getElementById('legitCount').textContent = legitCount;
+            document.getElementById('fraudPercentage').textContent = fraudPercentage + '%';
+
+            // Show dashboard content
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('dashboardContent').style.display = 'block';
+
+            // Render charts
+            renderCharts(fraudCount, legitCount, totalRecords);
+
+            // Render table
+            renderTable();
+
+        } catch (error) {
+            console.error('Error loading predictions:', error);
+            showErrorState();
+        }
+    }
+
+    function renderCharts(fraudCount, legitCount, totalRecords) {
+        // Pie Chart
+        const pieCtx = document.getElementById('distributionChart').getContext('2d');
+        
+        if (distributionChart) {
+            distributionChart.destroy();
+        }
+
+        distributionChart = new Chart(pieCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Fraud Cases', 'Legitimate Cases'],
+                datasets: [{
+                    data: [fraudCount, legitCount],
+                    backgroundColor: ['#ef4444', '#10b981'],
+                    borderColor: ['#dc2626', '#059669'],
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            font: { size: 14 },
+                            padding: 20
+                        }
+                    }
+                }
+            }
+        });
+
+        // Bar Chart
+        const barCtx = document.getElementById('statisticsChart').getContext('2d');
+        
+        if (statisticsChart) {
+            statisticsChart.destroy();
+        }
+
+        statisticsChart = new Chart(barCtx, {
+            type: 'bar',
+            data: {
+                labels: ['Fraud', 'Legitimate', 'Total'],
+                datasets: [{
+                    label: 'Count',
+                    data: [fraudCount, legitCount, totalRecords],
+                    backgroundColor: ['#ef4444', '#10b981', '#3b82f6'],
+                    borderColor: ['#dc2626', '#059669', '#1d4ed8'],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: {
+                            font: { size: 14 }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderTable() {
+        const tableBody = document.getElementById('tableBody');
+        tableBody.innerHTML = '';
+
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        const pageData = predictions.slice(startIndex, endIndex);
+
+        pageData.forEach((prediction, index) => {
+            const rowIndex = startIndex + index + 1;
+            const fraudProb = probabilities[startIndex + index][1].toFixed(4);
+            const legitProb = probabilities[startIndex + index][0].toFixed(4);
+            const confidence = Math.max(fraudProb, legitProb);
+            const predictionLabel = prediction === 1 ? 'Fraud' : 'Legitimate';
+            const predictionClass = prediction === 1 ? 'fraud' : 'legit';
+
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${rowIndex}</td>
+                <td><span class="badge badge-${predictionClass}">${predictionLabel}</span></td>
+                <td>${fraudProb}</td>
+                <td>${legitProb}</td>
+                <td><span class="confidence-bar" style="width: ${confidence * 100}%"></span>${(confidence * 100).toFixed(1)}%</td>
+            `;
+            tableBody.appendChild(row);
+        });
+
+        renderPagination();
+    }
+
+    function renderPagination() {
+        const pagination = document.getElementById('pagination');
+        pagination.innerHTML = '';
+
+        const totalPages = Math.ceil(predictions.length / itemsPerPage);
+
+        if (totalPages <= 1) return;
+
+        // Previous button
+        if (currentPage > 1) {
+            const prevBtn = document.createElement('button');
+            prevBtn.className = 'pagination-btn';
+            prevBtn.textContent = 'Previous';
+            prevBtn.onclick = () => {
+                currentPage--;
+                renderTable();
+                window.scrollTo(0, 0);
+            };
+            pagination.appendChild(prevBtn);
+        }
+
+        // Page numbers
+        for (let i = 1; i <= totalPages; i++) {
+            const pageBtn = document.createElement('button');
+            pageBtn.className = `pagination-btn ${i === currentPage ? 'active' : ''}`;
+            pageBtn.textContent = i;
+            pageBtn.onclick = () => {
+                currentPage = i;
+                renderTable();
+                window.scrollTo(0, 0);
+            };
+            pagination.appendChild(pageBtn);
+        }
+
+        // Next button
+        if (currentPage < totalPages) {
+            const nextBtn = document.createElement('button');
+            nextBtn.className = 'pagination-btn';
+            nextBtn.textContent = 'Next';
+            nextBtn.onclick = () => {
+                currentPage++;
+                renderTable();
+                window.scrollTo(0, 0);
+            };
+            pagination.appendChild(nextBtn);
+        }
+    }
+
+    async function downloadPredictions() {
+        try {
+            const response = await fetch('/api/download-predictions');
+            if (!response.ok) {
+                throw new Error('Failed to download predictions');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `predictions_${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (error) {
+            alert('Error downloading predictions: ' + error.message);
+        }
+    }
+
+    function showErrorState() {
+        document.getElementById('loadingState').style.display = 'none';
+        document.getElementById('dashboardContent').style.display = 'none';
+        document.getElementById('errorState').style.display = 'flex';
+    }
+</script>
+{% endblock %}
