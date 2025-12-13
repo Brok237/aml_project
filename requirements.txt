@@ -1,8 +1,9 @@
-# ML Prediction Dashboard - Python Dependencies for Streamlit
+# ML Prediction Dashboard - Python Dependencies
 # Install with: pip install -r requirements.txt
 
 # Web Framework
-streamlit==1.36.0
+Flask==3.1.2
+Werkzeug==3.1.3
 
 # Data Processing
 pandas==2.3.3
@@ -13,3 +14,15 @@ scikit-learn==1.7.2
 
 # File Handling
 openpyxl==3.1.5
+
+# Optional: For Production Deployment
+# Uncomment the following for production use:
+# gunicorn==21.2.0
+# python-dotenv==1.0.0
+# psycopg2-binary==2.9.9  # If using PostgreSQL
+
+# Optional: For Development
+# Uncomment the following for development:
+# pytest==7.4.3
+# black==23.12.1
+# flake8==6.1.0
